@@ -1,7 +1,8 @@
-[gd_scene load_steps=12 format=3 uid="uid://coig4anjb7ehe"]
+[gd_scene load_steps=13 format=3 uid="uid://coig4anjb7ehe"]
 
 [ext_resource type="Script" uid="uid://dq7wwkdgp0kbr" path="res://main.gd" id="1_ig7tw"]
 [ext_resource type="Texture2D" uid="uid://dt2ib23yw52u7" path="res://NightSkyHDRI009_2K_HDR.exr" id="2_0xm2m"]
+[ext_resource type="PackedScene" uid="uid://d4b7y6nt5d48y" path="res://creature.tscn" id="3_h2yge"]
 
 [sub_resource type="PanoramaSkyMaterial" id="PanoramaSkyMaterial_h2yge"]
 panorama = ExtResource("2_0xm2m")
@@ -88,3 +89,5 @@ surface_material_override/0 = SubResource("StandardMaterial3D_lquwl")
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 8, -4, 10)
 mesh = SubResource("SphereMesh_7mycd")
 surface_material_override/0 = SubResource("StandardMaterial3D_272bh")
+
+[node name="Node3D" parent="." instance=ExtResource("3_h2yge")]
