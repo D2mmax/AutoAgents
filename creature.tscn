@@ -1,4 +1,6 @@
-[gd_scene load_steps=3 format=3 uid="uid://d4b7y6nt5d48y"]
+[gd_scene load_steps=4 format=3 uid="uid://d4b7y6nt5d48y"]
+
+[ext_resource type="Script" uid="uid://b1108sbf3ryrt" path="res://creature.gd" id="1_fd6ru"]
 
 [sub_resource type="SphereMesh" id="SphereMesh_uxuua"]
 radius = 0.3
@@ -10,7 +12,8 @@ emission_enabled = true
 emission = Color(0.6, 0.2, 1, 1)
 emission_energy_multiplier = 2.0
 
-[node name="Node3D" type="Node3D"]
+[node name="Creature" type="Node3D"]
+script = ExtResource("1_fd6ru")
 
 [node name="Head" type="MeshInstance3D" parent="."]
 mesh = SubResource("SphereMesh_uxuua")
