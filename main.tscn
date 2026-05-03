@@ -1,6 +1,23 @@
-[gd_scene load_steps=2 format=3 uid="uid://coig4anjb7ehe"]
+[gd_scene load_steps=6 format=3 uid="uid://coig4anjb7ehe"]
 
 [ext_resource type="Script" uid="uid://dq7wwkdgp0kbr" path="res://main.gd" id="1_ig7tw"]
+[ext_resource type="Texture2D" uid="uid://dt2ib23yw52u7" path="res://NightSkyHDRI009_2K_HDR.exr" id="2_0xm2m"]
+
+[sub_resource type="PanoramaSkyMaterial" id="PanoramaSkyMaterial_h2yge"]
+panorama = ExtResource("2_0xm2m")
+
+[sub_resource type="Sky" id="Sky_1bvp3"]
+sky_material = SubResource("PanoramaSkyMaterial_h2yge")
+
+[sub_resource type="Environment" id="Environment_lquwl"]
+background_mode = 2
+sky = SubResource("Sky_1bvp3")
+ambient_light_source = 3
+tonemap_mode = 2
+tonemap_white = 6.0
+glow_enabled = true
+glow_bloom = 0.1
+glow_blend_mode = 0
 
 [node name="Node3D" type="Node3D"]
 script = ExtResource("1_ig7tw")
@@ -14,3 +31,6 @@ tracker = &"left_hand"
 
 [node name="RightHand" type="XRController3D" parent="XROrigin3D"]
 tracker = &"right_hand"
+
+[node name="WorldEnvironment" type="WorldEnvironment" parent="."]
+environment = SubResource("Environment_lquwl")
