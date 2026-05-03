@@ -8,6 +8,7 @@ var head: MeshInstance3D
 var segments: Array = []
 var velocity: Vector3 = Vector3(1, 0, 0)
 var time: float = 0.0
+const BOUNDS = 10.0
 
 func _ready():
 	head = get_node("Head")
@@ -44,6 +45,7 @@ func _update_head(delta):
 	velocity += steer * delta
 	velocity = velocity.normalized() * 2.0
 	head.global_position += velocity * delta
+	_apply_bounds()
 	if velocity.length() > 0.01:
 		head.look_at(head.global_position + velocity, Vector3.UP)
 
@@ -53,3 +55,12 @@ func _update_segments():
 		var diff = target - segments[i].global_position
 		if diff.length() > SEGMENT_DISTANCE:
 			segments[i].global_position += diff.normalized() * (diff.length() - SEGMENT_DISTANCE)
+
+func _apply_bounds():
+	var pos = head.global_position
+	if pos.x > BOUNDS or pos.x < -BOUNDS:
+		velocity.x *= -1
+	if pos.y > BOUNDS or pos.y < -BOUNDS:
+		velocity.y *= -1
+	if pos.z > BOUNDS or pos.z < -BOUNDS:
+		velocity.z *= -1
