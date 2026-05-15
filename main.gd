@@ -15,9 +15,13 @@ func _ready():
 	else:
 		$Camera3D.current = true
 	_setup_planet_colliders()
-	_spawn_food(5)
+	# Spawn 3 food per planet evenly at startup
+	for i in range(PLANETS.size()):
+		_spawn_food_at_planet(i)
+		_spawn_food_at_planet(i)
+		_spawn_food_at_planet(i)
 	var timer = Timer.new()
-	timer.wait_time = 15.0
+	timer.wait_time = 12.0
 	timer.autostart = true
 	timer.timeout.connect(_on_respawn_timer)
 	add_child(timer)
@@ -28,7 +32,6 @@ func _setup_planet_colliders():
 		var radius = planet_data[1]
 		if not planet:
 			continue
-		# Wrap in StaticBody3D
 		var body = StaticBody3D.new()
 		body.collision_layer = 2
 		body.collision_mask = 0
@@ -42,15 +45,13 @@ func _setup_planet_colliders():
 
 func _on_respawn_timer():
 	var food_count = get_tree().get_nodes_in_group("food").size()
-	if food_count < 3:
-		_spawn_food(3 - food_count)
+	if food_count < 6:
+		var needed = 6 - food_count
+		for i in range(needed):
+			_spawn_food_at_planet(i % PLANETS.size())
 
-func _spawn_food(count: int):
-	for i in range(count):
-		_spawn_food_near_planet()
-
-func _spawn_food_near_planet():
-	var planet_data = PLANETS[randi() % PLANETS.size()]
+func _spawn_food_at_planet(planet_index: int):
+	var planet_data = PLANETS[planet_index]
 	var planet = get_node_or_null(planet_data[0])
 	var planet_radius = planet_data[1]
 	var food = MeshInstance3D.new()
@@ -67,7 +68,6 @@ func _spawn_food_near_planet():
 	food.add_to_group("food")
 	add_child(food)
 	if planet:
-		# Spawn well clear of planet surface — min 2.5 units beyond radius
 		var offset = Vector3(randf_range(-1, 1), randf_range(-1, 1), randf_range(-1, 1)).normalized()
 		var spawn_dist = planet_radius + randf_range(2.5, 4.0)
 		food.global_position = planet.global_position + offset * spawn_dist

@@ -16,8 +16,11 @@ var hunger: float = 0.0
 var curiosity: float = 0.0
 
 # Needs rates
-const HUNGER_RATE = 0.05
+const HUNGER_RATE = 0.015
 const CURIOSITY_RATE = 0.008
+const LONELINESS_RATE = 0.012
+const LONELINESS_THRESHOLD = 0.7
+const LONELINESS_SEEK_RANGE = 12.0
 const HAND_FLEE_RANGE = 0.6
 
 # Distance thresholds
@@ -53,13 +56,15 @@ var left_hand: Node3D = null
 var right_hand: Node3D = null
 var food_target: Node3D = null
 var time_since_eaten: float = 0.0
+var bonding_cooldown: float = 0.0
+var loneliness: float = 0.0
 
-enum State {DRIFTING, CURIOUS, HUNTING, FEEDING, ORBITING, FLEEING, AGITATED, DISPLAYING, SEARCHING}
+enum State {DRIFTING, CURIOUS, HUNTING, FEEDING, ORBITING, FLEEING, AGITATED, DISPLAYING, SEARCHING, BONDING}
 var current_state: State = State.DRIFTING
 var state_timer: float = 0.0
 
-# Colour per state
-const STATE_COLOURS = {
+# Colour per state - two palettes for two creatures
+const STATE_COLOURS_0 = {
 	"DRIFTING":   Color(0.4, 0.0, 1.0),
 	"CURIOUS":    Color(0.0, 0.8, 1.0),
 	"HUNTING":    Color(1.0, 0.4, 0.0),
@@ -69,14 +74,33 @@ const STATE_COLOURS = {
 	"AGITATED":   Color(1.0, 0.2, 0.0),
 	"DISPLAYING": Color(1.0, 1.0, 0.0),
 	"SEARCHING":  Color(1.0, 0.7, 0.0),
+	"BONDING":    Color(0.0, 1.0, 1.0),
+}
+const STATE_COLOURS_1 = {
+	"DRIFTING":   Color(0.0, 0.8, 0.4),
+	"CURIOUS":    Color(0.8, 0.0, 1.0),
+	"HUNTING":    Color(1.0, 0.8, 0.0),
+	"FEEDING":    Color(0.0, 0.8, 1.0),
+	"ORBITING":   Color(0.0, 1.0, 0.5),
+	"FLEEING":    Color(1.0, 0.0, 0.5),
+	"AGITATED":   Color(1.0, 0.0, 0.8),
+	"DISPLAYING": Color(0.0, 1.0, 0.8),
+	"SEARCHING":  Color(0.8, 1.0, 0.0),
+	"BONDING":    Color(1.0, 0.0, 1.0),
 }
 
 # HUD label attached to camera
+var creature_index: int = 0
 var hud_label: Label3D = null
 
 func _ready():
 	head = get_node("Head")
+	# Duplicate head material so each creature has its own independent copy
+	var mat = head.get_surface_override_material(0)
+	if mat:
+		head.set_surface_override_material(0, mat.duplicate())
 	_create_segments()
+	add_to_group("creatures")
 	# Assign references FIRST before any await
 	var origin = get_node_or_null("/root/Node3D/XROrigin3D")
 	if origin:
@@ -85,6 +109,12 @@ func _ready():
 		right_hand  = origin.get_node_or_null("RightHand")
 	if not player_head:
 		player_head = get_node_or_null("/root/Node3D/Camera3D")
+	# Set creature index now so colour is correct from the start
+	var all_creatures = get_tree().get_nodes_in_group("creatures")
+	creature_index = all_creatures.find(self)
+	var palette = STATE_COLOURS_0 if creature_index == 0 else STATE_COLOURS_1
+	await get_tree().process_frame
+	_set_colour(palette["DRIFTING"])
 	# Wait for XR to fully initialise then attach HUD
 	await get_tree().create_timer(2.0).timeout
 	_setup_hud_label()
@@ -93,21 +123,25 @@ func _setup_hud_label():
 	if not player_head:
 		print("HUD: player_head is null, cannot attach label")
 		return
+	var creatures = get_tree().get_nodes_in_group("creatures")
+	creature_index = creatures.find(self)
 	hud_label = Label3D.new()
-	hud_label.font_size = 16
+	hud_label.font_size = 12
 	hud_label.modulate = Color.WHITE
 	hud_label.no_depth_test = true
 	hud_label.billboard = BaseMaterial3D.BILLBOARD_DISABLED
-	# Top-left corner of view, fixed relative to camera
-	hud_label.position = Vector3(-0.55, 0.32, -2.5)
+	if creature_index == 0:
+		hud_label.position = Vector3(-0.8, 0.38, -2.5)
+	else:
+		hud_label.position = Vector3(0.8, 0.38, -2.5)
 	player_head.add_child(hud_label)
-	print("HUD label attached to: ", player_head.name)
+	print("HUD label attached for creature ", creature_index)
 
 func _update_hud_label():
 	if not hud_label:
 		return
-	hud_label.text = "STATE: %s\nHUNGER:    %.2f\nCURIOSITY: %.2f" % [
-		State.keys()[current_state], hunger, curiosity
+	hud_label.text = "C%d STATE: %s\nHUNGER:    %.2f\nCURIOSITY: %.2f\nLONELY:    %.2f" % [
+		creature_index + 1, State.keys()[current_state], hunger, curiosity, loneliness
 	]
 
 # ─── Segment creation ─────────────────────────────────────────────────────────
@@ -224,6 +258,89 @@ func _apply_bounds():
 	if pos.z < -BOUNDS + margin: force.z += ((-BOUNDS + margin) - pos.z) / margin
 	velocity += force * 5.0
 
+func _get_other_creature() -> Node3D:
+	var creatures = get_tree().get_nodes_in_group("creatures")
+	for c in creatures:
+		if c != self:
+			return c
+	return null
+
+func _check_bonding_trigger() -> bool:
+	if bonding_cooldown > 0:
+		return false
+	if loneliness < LONELINESS_THRESHOLD:
+		return false
+	var other = _get_other_creature()
+	if not other:
+		return false
+	var other_head = other.get_node_or_null("Head")
+	if not other_head:
+		return false
+	var dist = head.global_position.distance_to(other_head.global_position)
+	var my_bad = [State.FLEEING, State.FEEDING, State.HUNTING, State.BONDING]
+	var other_bad = [State.FLEEING, State.FEEDING, State.HUNTING]
+	if current_state in my_bad:
+		return false
+	# Join other if already bonding
+	if other.current_state == State.BONDING and dist < 6.0:
+		return true
+	# Both lonely and close enough
+	if dist < 4.0 and other.current_state not in other_bad:
+		return true
+	return false
+
+func _state_bonding(delta):
+	var other = _get_other_creature()
+	if not other:
+		change_state(State.DRIFTING)
+		return
+	var other_head = other.get_node_or_null("Head")
+	if not other_head:
+		change_state(State.DRIFTING)
+		return
+	# Break out if hungry or other creature left
+	if hunger > 0.85 or other.current_state == State.FLEEING or other.current_state == State.HUNTING:
+		change_state(State.DRIFTING)
+		return
+	# End bonding when loneliness is satisfied
+	if loneliness <= 0.0:
+		change_state(State.DRIFTING)
+		return
+	if state_timer > 20.0:
+		change_state(State.DRIFTING)
+		return
+	# Shared center point between both heads drifts slowly
+	var center = (head.global_position + other_head.global_position) * 0.5
+	center += Vector3(sin(time * 0.2), cos(time * 0.15), sin(time * 0.25)) * 0.5
+	# Each creature orbits the center on opposite sides - DNA helix
+	var helix_angle = state_timer * 1.5
+	var helix_radius = 1.2
+	var helix_height = sin(state_timer * 0.8) * 1.5
+	var my_offset: Vector3
+	if creature_index == 0:
+		my_offset = Vector3(cos(helix_angle) * helix_radius, helix_height, sin(helix_angle) * helix_radius)
+	else:
+		my_offset = Vector3(cos(helix_angle + PI) * helix_radius, -helix_height, sin(helix_angle + PI) * helix_radius)
+	var target = center + my_offset
+	_seek(target, ORBIT_SPEED, delta)
+	# Complementary colours pulsing
+	var hue = fmod(state_timer * 0.2, 1.0)
+	if creature_index == 0:
+		_set_colour(Color.from_hsv(hue, 1.0, 1.0))
+	else:
+		_set_colour(Color.from_hsv(fmod(hue + 0.5, 1.0), 1.0, 1.0))
+
+func _apply_separation():
+	var others = get_tree().get_nodes_in_group("creatures")
+	for other in others:
+		if other == self: continue
+		var oh = other.get_node_or_null("Head")
+		if not oh: continue
+		var away = head.global_position - oh.global_position
+		var dist = away.length()
+		if dist < 2.5 and dist > 0.01:
+			velocity += away.normalized() * pow(1.0 - (dist / 2.5), 2.0) * 6.0
+
 func _apply_planet_repulsion():
 	var planets = [
 		[get_node_or_null("/root/Node3D/SmallPlanet"),  1.0],
@@ -233,13 +350,11 @@ func _apply_planet_repulsion():
 	for p in planets:
 		var planet = p[0]
 		var radius = p[1]
-		if not planet:
-			continue
+		if not planet: continue
 		var away = head.global_position - planet.global_position
 		var dist = away.length()
 		var influence_range = radius + 2.0
 		if dist < influence_range:
-			# Strength increases as it gets closer, zero at influence edge
 			var strength = pow(1.0 - (dist / influence_range), 2.0) * 8.0
 			velocity += away.normalized() * strength
 
@@ -268,6 +383,17 @@ func _update_needs(delta):
 	# Curiosity drains while orbiting or displaying
 	if current_state == State.ORBITING or current_state == State.DISPLAYING:
 		curiosity = max(curiosity - 0.05 * delta, 0.0)
+	# Loneliness builds when far from other creature, only drains while bonding
+	var other = _get_other_creature()
+	if current_state == State.BONDING:
+		loneliness = max(loneliness - 0.06 * delta, 0.0)
+	elif other:
+		var other_head = other.get_node_or_null("Head")
+		if other_head:
+			var dist = head.global_position.distance_to(other_head.global_position)
+			if dist > 8.0:
+				var rate = LONELINESS_RATE * (dist / 8.0)
+				loneliness = min(loneliness + rate * delta, 1.0)
 
 # ─── States ───────────────────────────────────────────────────────────────────
 
@@ -284,7 +410,24 @@ func _check_hand_flee():
 		change_state(State.FLEEING)
 
 func _state_drifting(delta):
+	# If lonely, seek the other creature
+	if loneliness > LONELINESS_THRESHOLD and hunger < 0.7:
+		var other = _get_other_creature()
+		if other:
+			var other_head = other.get_node_or_null("Head")
+			if other_head:
+				var dist = head.global_position.distance_to(other_head.global_position)
+				if dist > 4.0:
+					_apply_planet_repulsion()
+					_seek(other_head.global_position, DRIFT_SPEED * 1.5, delta)
+					_update_segments()
+					return
+	# Check bonding BEFORE separation so proximity doesn't push them apart
+	if _check_bonding_trigger():
+		change_state(State.BONDING)
+		return
 	_apply_planet_repulsion()
+	_apply_separation()
 	_update_head(delta)
 	_check_hand_flee()
 	if not player_head or state_timer < MIN_STATE_DURATION:
@@ -305,6 +448,9 @@ func _state_drifting(delta):
 func _state_curious(delta):
 	_check_hand_flee()
 	if current_state != State.CURIOUS: return
+	if _check_bonding_trigger():
+		change_state(State.BONDING)
+		return
 	if not player_head:
 		change_state(State.DRIFTING)
 		return
@@ -341,10 +487,10 @@ func _state_hunting(delta):
 		change_state(State.FEEDING)
 		return
 	var speed = lerp(HUNT_SPEED, 1.5, clamp(1.0 - dist / 4.0, 0.0, 1.0))
-	# Seek force toward food
+	# Seek + repulsion + separation combined
 	var seek_force = (food_target.global_position - head.global_position).normalized() * speed
-	# Repulsion force from planets
 	var repulsion = Vector3.ZERO
+	var separation = Vector3.ZERO
 	var planets = [
 		[get_node_or_null("/root/Node3D/SmallPlanet"),  1.0],
 		[get_node_or_null("/root/Node3D/MediumPlanet"), 1.5],
@@ -361,8 +507,17 @@ func _state_hunting(delta):
 		if pdist < influence:
 			var strength = pow(1.0 - (pdist / influence), 2.0) * 8.0
 			repulsion += away.normalized() * strength
-	# Combine both forces then normalize — repulsion actually affects direction
-	var combined = seek_force + repulsion
+	# Separation from other creatures
+	var creatures = get_tree().get_nodes_in_group("creatures")
+	for other in creatures:
+		if other == self: continue
+		var oh = other.get_node_or_null("Head")
+		if not oh: continue
+		var away2 = head.global_position - oh.global_position
+		var d2 = away2.length()
+		if d2 < 2.5 and d2 > 0.01:
+			separation += away2.normalized() * pow(1.0 - (d2 / 2.5), 2.0) * 6.0
+	var combined = seek_force + repulsion + separation
 	velocity = combined.normalized() * speed
 	head.global_position += velocity * delta
 	_apply_bounds()
@@ -385,6 +540,9 @@ func _state_feeding(delta):
 func _state_orbiting(delta):
 	_check_hand_flee()
 	if current_state != State.ORBITING: return
+	if _check_bonding_trigger():
+		change_state(State.BONDING)
+		return
 	if not player_head:
 		change_state(State.DRIFTING)
 		return
@@ -461,7 +619,11 @@ func _state_displaying(delta):
 func _state_searching(delta):
 	_check_hand_flee()
 	if current_state != State.SEARCHING: return
+	if _check_bonding_trigger():
+		change_state(State.BONDING)
+		return
 	_apply_planet_repulsion()
+	_apply_separation()
 	var noise_x = sin(time * 1.4) * cos(time * 0.9)
 	var noise_y = sin(time * 1.1 + 1.3) * cos(time * 1.3)
 	var noise_z = sin(time * 0.9 + 2.1) * cos(time * 1.6)
@@ -480,6 +642,8 @@ func _state_searching(delta):
 
 func _process(delta):
 	time += delta
+	if bonding_cooldown > 0:
+		bonding_cooldown -= delta
 	_update_needs(delta)
 	_find_food()
 	_update_state(delta)
@@ -488,10 +652,11 @@ func _process(delta):
 
 func _update_state(delta):
 	state_timer += delta
-	if current_state != State.FEEDING and current_state != State.DISPLAYING:
+	if current_state != State.FEEDING and current_state != State.DISPLAYING and current_state != State.BONDING:
+		var palette = STATE_COLOURS_0 if creature_index == 0 else STATE_COLOURS_1
 		var key = State.keys()[current_state]
-		if STATE_COLOURS.has(key):
-			_set_colour(STATE_COLOURS[key])
+		if palette.has(key):
+			_set_colour(palette[key])
 	match current_state:
 		State.DRIFTING:   _state_drifting(delta)
 		State.CURIOUS:    _state_curious(delta)
@@ -502,8 +667,11 @@ func _update_state(delta):
 		State.AGITATED:   _state_agitated(delta)
 		State.DISPLAYING: _state_displaying(delta)
 		State.SEARCHING:  _state_searching(delta)
+		State.BONDING:    _state_bonding(delta)
 
 func change_state(new_state: State):
+	if current_state == State.BONDING and new_state != State.BONDING:
+		bonding_cooldown = 8.0
 	current_state = new_state
 	state_timer = 0.0
 	head.scale = Vector3.ONE
