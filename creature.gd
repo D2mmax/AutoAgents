@@ -18,14 +18,14 @@ var curiosity: float = 0.0
 # Needs rates
 const HUNGER_RATE = 0.05
 const CURIOSITY_RATE = 0.008
-const HAND_FLEE_RANGE = 0.3
+const HAND_FLEE_RANGE = 0.6
 
 # Distance thresholds
 const CURIOUS_RANGE = 8.0
 const ORBIT_RANGE = 2.5
 const FLEE_RANGE = 1.2
 const FOOD_DETECT_RANGE = 12.0
-const FOOD_EAT_RANGE = 0.6
+const FOOD_EAT_RANGE = 0.5
 const HUNGER_THRESHOLD = 0.3
 
 # Speed constants
@@ -147,8 +147,8 @@ func _add_segment():
 	segments.append(seg)
 
 func _set_colour(c: Color):
-	# Update head
-	var head_mat = head.material_override as StandardMaterial3D
+	# Head uses surface_material_override/0 set in the scene
+	var head_mat = head.get_surface_override_material(0) as StandardMaterial3D
 	if head_mat:
 		head_mat.emission = c * 1.5
 	# Update segments
@@ -224,6 +224,25 @@ func _apply_bounds():
 	if pos.z < -BOUNDS + margin: force.z += ((-BOUNDS + margin) - pos.z) / margin
 	velocity += force * 5.0
 
+func _apply_planet_repulsion():
+	var planets = [
+		[get_node_or_null("/root/Node3D/SmallPlanet"),  1.0],
+		[get_node_or_null("/root/Node3D/MediumPlanet"), 1.5],
+		[get_node_or_null("/root/Node3D/LargePlanet"),  2.0],
+	]
+	for p in planets:
+		var planet = p[0]
+		var radius = p[1]
+		if not planet:
+			continue
+		var away = head.global_position - planet.global_position
+		var dist = away.length()
+		var influence_range = radius + 2.0
+		if dist < influence_range:
+			# Strength increases as it gets closer, zero at influence edge
+			var strength = pow(1.0 - (dist / influence_range), 2.0) * 8.0
+			velocity += away.normalized() * strength
+
 func _find_food():
 	var food_nodes = get_tree().get_nodes_in_group("food")
 	if food_nodes.is_empty():
@@ -265,6 +284,7 @@ func _check_hand_flee():
 		change_state(State.FLEEING)
 
 func _state_drifting(delta):
+	_apply_planet_repulsion()
 	_update_head(delta)
 	_check_hand_flee()
 	if not player_head or state_timer < MIN_STATE_DURATION:
@@ -283,6 +303,8 @@ func _state_drifting(delta):
 		change_state(State.SEARCHING)
 
 func _state_curious(delta):
+	_check_hand_flee()
+	if current_state != State.CURIOUS: return
 	if not player_head:
 		change_state(State.DRIFTING)
 		return
@@ -299,16 +321,53 @@ func _state_curious(delta):
 		change_state(State.DRIFTING)
 	elif food_target and hunger > HUNGER_THRESHOLD:
 		change_state(State.HUNTING)
+	elif hunger > 0.85:
+		change_state(State.SEARCHING)
 
 func _state_hunting(delta):
+	_check_hand_flee()
+	if current_state != State.HUNTING: return
 	if not food_target:
 		change_state(State.SEARCHING)
 		return
+	if state_timer > 12.0:
+		if food_target:
+			food_target.queue_free()
+			food_target = null
+		change_state(State.SEARCHING)
+		return
 	var dist = head.global_position.distance_to(food_target.global_position)
-	var speed = lerp(HUNT_SPEED, 1.5, clamp(1.0 - dist / 3.0, 0.0, 1.0))
-	_seek(food_target.global_position, speed, delta)
 	if dist < FOOD_EAT_RANGE:
 		change_state(State.FEEDING)
+		return
+	var speed = lerp(HUNT_SPEED, 1.5, clamp(1.0 - dist / 4.0, 0.0, 1.0))
+	# Seek force toward food
+	var seek_force = (food_target.global_position - head.global_position).normalized() * speed
+	# Repulsion force from planets
+	var repulsion = Vector3.ZERO
+	var planets = [
+		[get_node_or_null("/root/Node3D/SmallPlanet"),  1.0],
+		[get_node_or_null("/root/Node3D/MediumPlanet"), 1.5],
+		[get_node_or_null("/root/Node3D/LargePlanet"),  2.0],
+	]
+	for p in planets:
+		var planet = p[0]
+		var radius = p[1]
+		if not planet:
+			continue
+		var away = head.global_position - planet.global_position
+		var pdist = away.length()
+		var influence = radius + 2.0
+		if pdist < influence:
+			var strength = pow(1.0 - (pdist / influence), 2.0) * 8.0
+			repulsion += away.normalized() * strength
+	# Combine both forces then normalize — repulsion actually affects direction
+	var combined = seek_force + repulsion
+	velocity = combined.normalized() * speed
+	head.global_position += velocity * delta
+	_apply_bounds()
+	if velocity.length() > 0.01:
+		head.look_at(head.global_position + velocity, Vector3.UP)
 
 func _state_feeding(delta):
 	_update_head(delta)
@@ -324,6 +383,8 @@ func _state_feeding(delta):
 		change_state(State.DRIFTING)
 
 func _state_orbiting(delta):
+	_check_hand_flee()
+	if current_state != State.ORBITING: return
 	if not player_head:
 		change_state(State.DRIFTING)
 		return
@@ -343,6 +404,8 @@ func _state_orbiting(delta):
 		change_state(State.DISPLAYING)
 	elif state_timer > DISPLAYING_DURATION * 2.0:
 		change_state(State.DRIFTING)
+	elif hunger > 0.85:
+		change_state(State.HUNTING if food_target else State.SEARCHING)
 
 func _state_fleeing(delta):
 	_flee_from(_get_nearest_hand_position(), FLEE_SPEED, delta)
@@ -367,29 +430,38 @@ func _state_agitated(delta):
 		change_state(State.DRIFTING)
 
 func _state_displaying(delta):
+	_check_hand_flee()
+	if current_state != State.DISPLAYING: return
 	if not player_head:
 		change_state(State.DRIFTING)
 		return
-	# Hypnotic spirograph orbit - two sine waves at different frequencies
-	orbit_angle += delta * 1.5
-	var r1 = ORBIT_RADIUS * 2.0
-	var r2 = ORBIT_RADIUS * 0.8
-	var target = player_head.global_position + Vector3(
-		cos(orbit_angle) * r1 + cos(orbit_angle * 3.0) * r2,
-		sin(orbit_angle * 2.0) * r1 * 0.6,
-		sin(orbit_angle) * r1 + sin(orbit_angle * 3.0) * r2
+	# Move to a fixed point 5m in front of player first
+	var forward = -player_head.global_transform.basis.z
+	var display_center = player_head.global_position + forward * 5.0
+	# Tornado spiral around that center point
+	orbit_angle += delta * 3.0
+	# Radius pulses in and out like a tornado — tight at bottom, wide at top
+	var tornado_height = sin(state_timer * 0.8) * 1.5
+	var tornado_radius = 0.3 + abs(tornado_height) * 0.6
+	var target = display_center + Vector3(
+		cos(orbit_angle) * tornado_radius,
+		tornado_height,
+		sin(orbit_angle) * tornado_radius
 	)
-	_seek(target, ORBIT_SPEED * 2.0, delta)
-	# Fast rainbow that also pulses brightness
-	var brightness = 0.6 + abs(sin(state_timer * 4.0)) * 0.4
-	_set_colour(Color.from_hsv(fmod(state_timer * 0.6, 1.0), 1.0, brightness))
-	# Head pulses in size
-	head.scale = Vector3.ONE * (1.0 + sin(state_timer * 5.0) * 0.4)
+	_seek(target, ORBIT_SPEED * 1.5, delta)
+	# Fast rainbow cycle
+	_set_colour(Color.from_hsv(fmod(state_timer * 0.5, 1.0), 1.0, 1.0))
+	# Head pulses with spin speed
+	head.scale = Vector3.ONE * (1.0 + abs(sin(state_timer * 4.0)) * 0.3)
 	if state_timer > DISPLAYING_DURATION:
-		head.scale = Vector3.ONE
 		change_state(State.DRIFTING)
+	elif hunger > 0.85:
+		change_state(State.HUNTING if food_target else State.SEARCHING)
 
 func _state_searching(delta):
+	_check_hand_flee()
+	if current_state != State.SEARCHING: return
+	_apply_planet_repulsion()
 	var noise_x = sin(time * 1.4) * cos(time * 0.9)
 	var noise_y = sin(time * 1.1 + 1.3) * cos(time * 1.3)
 	var noise_z = sin(time * 0.9 + 2.1) * cos(time * 1.6)
@@ -434,3 +506,4 @@ func _update_state(delta):
 func change_state(new_state: State):
 	current_state = new_state
 	state_timer = 0.0
+	head.scale = Vector3.ONE
