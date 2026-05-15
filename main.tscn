@@ -1,7 +1,9 @@
-[gd_scene load_steps=13 format=3 uid="uid://coig4anjb7ehe"]
+[gd_scene load_steps=15 format=3 uid="uid://coig4anjb7ehe"]
 
 [ext_resource type="Script" uid="uid://dq7wwkdgp0kbr" path="res://main.gd" id="1_ig7tw"]
 [ext_resource type="Texture2D" uid="uid://dt2ib23yw52u7" path="res://NightSkyHDRI009_2K_HDR.exr" id="2_0xm2m"]
+[ext_resource type="PackedScene" uid="uid://b4kad2kuba1yn" path="res://addons/godot-xr-tools/hands/scenes/lowpoly/left_hand_low.tscn" id="2_lquwl"]
+[ext_resource type="PackedScene" uid="uid://l2n30mpbkdyw" path="res://addons/godot-xr-tools/hands/scenes/lowpoly/right_hand_low.tscn" id="3_7mycd"]
 [ext_resource type="PackedScene" uid="uid://d4b7y6nt5d48y" path="res://creature.tscn" id="3_h2yge"]
 
 [sub_resource type="PanoramaSkyMaterial" id="PanoramaSkyMaterial_h2yge"]
@@ -69,14 +71,18 @@ script = ExtResource("1_ig7tw")
 [node name="LeftHand" type="XRController3D" parent="XROrigin3D"]
 tracker = &"left_hand"
 
+[node name="LeftHand" parent="XROrigin3D/LeftHand" instance=ExtResource("2_lquwl")]
+
 [node name="RightHand" type="XRController3D" parent="XROrigin3D"]
 tracker = &"right_hand"
+
+[node name="RightHand" parent="XROrigin3D/RightHand" instance=ExtResource("3_7mycd")]
 
 [node name="WorldEnvironment" type="WorldEnvironment" parent="."]
 environment = SubResource("Environment_lquwl")
 
 [node name="SmallPlanet" type="MeshInstance3D" parent="."]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 12, -2, -8)
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 10, -2, -8)
 mesh = SubResource("SphereMesh_0xm2m")
 surface_material_override/0 = SubResource("StandardMaterial3D_h2yge")
 
@@ -86,7 +92,7 @@ mesh = SubResource("SphereMesh_1bvp3")
 surface_material_override/0 = SubResource("StandardMaterial3D_lquwl")
 
 [node name="LargePlanet" type="MeshInstance3D" parent="."]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 8, -4, 10)
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 8, -4, 12)
 mesh = SubResource("SphereMesh_7mycd")
 surface_material_override/0 = SubResource("StandardMaterial3D_272bh")
 
