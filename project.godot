@@ -27,8 +27,11 @@ enabled=PackedStringArray("res://addons/godot-xr-tools/plugin.cfg")
 [rendering]
 
 renderer/rendering_method="mobile"
+textures/vram_compression/import_etc2_astc=true
 
 [xr]
 
 openxr/enabled=true
+openxr/startup_alert=false
+openxr/extensions/hand_tracking=true
 shaders/enabled=true
